@@ -1,313 +1,213 @@
-import fs from 'fs'
 import util from 'util'
 import crypto from 'crypto'
-import request from 'request'
-import { liveOrigin, apiVCOrigin, apiLiveOrigin, _options } from '../index'
-const FSmkdir = util.promisify(fs.mkdir)
-const FSexists = util.promisify(fs.exists)
-const FScopyFile = util.promisify(fs.copyFile)
-const FSreadFile = util.promisify(fs.readFile)
-const FSwriteFile = util.promisify(fs.writeFile)
+import got from 'got'
+import { CookieJar } from 'tough-cookie'
+import { EventEmitter } from 'events'
+import { IncomingHttpHeaders } from 'http'
 /**
- * 请求头
- * 
- * @param {string} platform 
- * @returns {request.Headers} 
+ * 一些工具, 供全局调用
+ *
+ * @class Tools
+ * @extends {EventEmitter}
  */
-function getHeaders(platform: string): request.Headers {
-  switch (platform) {
-    case 'Android':
-      return {
-        'Connection': 'Keep-Alive',
-        'User-Agent': 'Mozilla/5.0 BiliDroid/5.22.0 (bbcallen@gmail.com)'
-      }
-    case 'WebView':
-      return {
-        'Accept': 'application/json, text/javascript, */*',
-        'Accept-Language': 'zh-CN',
-        'Connection': 'keep-alive',
-        'Cookie': 'l=v',
-        'Origin': liveOrigin,
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 7.1.1; E6883 Build/32.4.A.1.54; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/64.0.3282.119 Mobile Safari/537.36 BiliApp/5220000',
-        'X-Requested-With': 'tv.danmaku.bili'
-      }
-    default:
-      return {
-        'Accept': 'application/json, text/javascript, */*',
-        'Accept-Language': 'zh-CN',
-        'Connection': 'keep-alive',
-        'Cookie': 'l=v',
-        'DNT': '1',
-        'Origin': liveOrigin,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.119 Safari/537.36'
-      }
-  }
-}
-/**
- * 获取api的ip
- * 
- * @class IP
- */
-class IP {
+class Tools extends EventEmitter {
   constructor() {
+    super()
+    this.on('systemMSG', (data: systemMSG) => this.Log(data.message))
   }
-  public IPs: Set<string> = new Set()
-  private __IPiterator: IterableIterator<string> = this.IPs.values()
-  public get ip(): string {
-    if (this.IPs.size === 0) return ''
-    const ip = this.__IPiterator.next()
-    if (ip.done) {
-      this.__IPiterator = this.IPs.values()
-      return this.ip
+  /**
+   * 请求头
+   *
+   * @param {string} platform
+   * @returns {request.Headers}
+   * @memberof tools
+   */
+  public getHeaders(platform: string): IncomingHttpHeaders {
+    switch (platform) {
+      case 'Android':
+        return {
+          'Connection': 'Keep-Alive',
+          'env': 'prod',
+          'User-Agent': 'Mozilla/5.0 BiliDroid/5.57.0 (bbcallen@gmail.com) os/android model/J9110 mobi_app/android build/5570300 channel/bili innerVer/5570300 osVer/10 network/2'
+        }
+      case 'WebView':
+        return {
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Connection': 'keep-alive',
+          'Origin': 'https://live.bilibili.com',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-site',
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; J9110 Build/55.1.A.3.107; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/80.0.3987.162 Mobile Safari/537.36 BiliApp/5570300',
+          'X-Requested-With': 'tv.danmaku.bili'
+        }
+      default:
+        return {
+          'Accept': 'application/json, text/javascript, */*',
+          'Accept-Language': 'zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6',
+          'Connection': 'keep-alive',
+          'DNT': '1',
+          'Origin': 'https://live.bilibili.com',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-site',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.163 Safari/537.36'
+        }
     }
-    return ip.value
   }
-}
-const api = new IP()
-/**
- * 测试可用ip
- * 
- * @param {string[]} apiIPs 
- * @returns {Promise<number>} 
- */
-async function testIP(apiIPs: string[]): Promise<number> {
-  const test: Promise<undefined>[] = []
-  apiIPs.forEach(ip => {
-    const headers = getHeaders('PC')
-    const options = {
-      uri: `${apiLiveOrigin}/ip_service/v1/ip_service/get_ip_addr`,
-      proxy: `http://${ip}/`,
-      tunnel: false,
-      method: 'GET',
-      timeout: 2000,
-      headers
+  /**
+   * 添加request头信息
+   *
+   * @template T
+   * @param {XHRoptions} options
+   * @param {('PC' | 'Android' | 'WebView')} [platform='PC']
+   * @returns {(Promise<XHRresponse<T> | undefined>)}
+   * @memberof tools
+   */
+  public async XHR<T>(options: XHRoptions, platform: 'PC' | 'Android' | 'WebView' = 'PC'): Promise<XHRresponse<T> | undefined> {
+    // 为了兼容已有插件
+    if (options.url === undefined && options.uri !== undefined) {
+      options.url = options.uri
+      delete options.uri
     }
-    test.push(new Promise<undefined>(resolve => {
-      request(options, (error, response) => {
-        if (error === null && response.statusCode === 200) api.IPs.add(ip)
-        return resolve(undefined)
-      })
-    }))
-  })
-  Log('正在测试可用ip')
-  await Promise.all(test)
-  const num = api.IPs.size
-  Log('可用ip数量为', num)
-  return num
-}
-const shortRoomID = new Map<number, number>()
-const longRoomID = new Map<number, number>()
-/**
- * 获取短id
- * 
- * @param {number} roomID 
- * @returns {number} 
- */
-function getShortRoomID(roomID: number): number {
-  return shortRoomID.get(roomID) || roomID
-}
-/**
- * 获取长id
- * 
- * @param {number} roomID 
- * @returns {number} 
- */
-function getLongRoomID(roomID: number): number {
-  return longRoomID.get(roomID) || roomID
-}
-/**
- * 添加request头信息
- * 
- * @template T 
- * @param {request.OptionsWithUri} options 
- * @param {('PC' | 'Android' | 'WebView')} [platform='PC'] 
- * @returns {Promise<response<T> | undefined>} 
- */
-function XHR<T>(options: request.OptionsWithUri, platform: 'PC' | 'Android' | 'WebView' = 'PC')
-  : Promise<response<T> | undefined> {
-  return new Promise<response<T> | undefined>(resolve => {
-    options.gzip = true
-    // 添加用户代理
-    if (typeof options.uri === 'string' && (options.uri.startsWith(apiLiveOrigin) || options.uri.startsWith(apiVCOrigin))) {
-      const ip = api.ip
-      if (ip !== '') {
-        options.proxy = `http://${ip}/`
-        options.tunnel = false
-      }
+    if (options.cookieJar === undefined && options.jar !== undefined) {
+      options.cookieJar = options.jar
+      delete options.jar
+    }
+    if (options.encoding === null) {
+      options.responseType = 'buffer'
+      delete options.encoding
+    }
+    if (options.json === true) {
+      options.responseType = 'json'
+      delete options.json
     }
     // 添加头信息
-    const headers = getHeaders(platform)
+    const headers = this.getHeaders(platform)
     options.headers = options.headers === undefined ? headers : Object.assign(headers, options.headers)
-    if (options.method === 'POST')
+    if (options.method !== undefined && options.method.toLocaleUpperCase() === 'POST' && options.headers['Content-Type'] === undefined)
       options.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8'
-    // 返回异步request
-    request(options, (error, response, body) => {
-      if (error === null) return resolve({ response, body })
-      else {
-        const ip = error.address
-        if (ip !== undefined && api.IPs.has(ip)) api.IPs.delete(ip)
-        ErrorLog(options.uri, error)
-        return resolve(undefined)
+    // @ts-ignore got把参数分的太细了, 导致responseType没法确定
+    const gotResponse = await got<T>(options).catch(error => this.ErrorLog(options.url, error))
+    if (gotResponse === undefined) return
+    else return { response: gotResponse, body: gotResponse.body }
+  }
+  /**
+   * 获取cookie值
+   *
+   * @param {CookieJar} jar
+   * @param {string} key
+   * @param {*} [url=apiLiveOrigin]
+   * @returns {string}
+   * @memberof tools
+   */
+  public getCookie(jar: CookieJar, key: string, url = 'https://api.live.bilibili.com'): string {
+    const cookies = jar.getCookiesSync(url)
+    const cookieFind = cookies.find(cookie => cookie.key === key)
+    return cookieFind === undefined ? '' : cookieFind.value
+  }
+  /**
+   * 设置cookie
+   *
+   * @param {string} cookieString
+   * @returns {CookieJar}
+   * @memberof tools
+   */
+  public setCookie(cookieString: string): CookieJar {
+    const jar = new CookieJar()
+    if (cookieString !== '') cookieString.split(';').forEach(cookie => jar.setCookieSync(`${cookie}; Domain=bilibili.com; Path=/`, 'https://bilibili.com'))
+    return jar
+  }
+  /**
+   * 格式化JSON
+   *
+   * @template T
+   * @param {string} text
+   * @param {((key: any, value: any) => any)} [reviver]
+   * @returns {(Promise<T | undefined>)}
+   * @memberof tools
+   */
+  public JSONparse<T>(text: string, reviver?: ((key: any, value: any) => any)): Promise<T | undefined> {
+    return new Promise<T | undefined>(resolve => {
+      try {
+        const obj = JSON.parse(text, reviver)
+        return resolve(obj)
+      }
+      catch (error) {
+        this.ErrorLog('JSONparse', error)
+        return resolve()
       }
     })
-  })
-}
-/**
- * 操作数据文件, 为了可以快速应用不使用数据库
- * 
- * @param {_options} [options]
- * @returns {Promise<options>}
- */
-function Options(options?: _options): Promise<_options> {
-  return new Promise(async resolve => {
-    // 根据npm start参数不同设置不同路径
-    const dirname = __dirname + (process.env.npm_package_scripts_start === 'node build/app.js' ? '/../../..' : '/../..')
-    // 检查是否有options目录
-    const hasDir = await FSexists(dirname + '/options/')
-    if (!hasDir) await FSmkdir(dirname + '/options/')
-    if (options === undefined) {
-      // 复制默认设置文件到用户设置文件
-      const hasFile = await FSexists(dirname + '/options/options.json')
-      if (!hasFile) await FScopyFile(dirname + '/bilive/options.default.json', dirname + '/options/options.json')
-      // 读取默认设置文件
-      const defaultOptionBuffer = await FSreadFile(dirname + '/bilive/options.default.json')
-      const defaultOption = await JSONparse<_options>(defaultOptionBuffer.toString())
-      // 读取用户设置文件
-      const userOptionBuffer = await FSreadFile(dirname + '/options/options.json')
-      const userOption = await JSONparse<_options>(userOptionBuffer.toString())
-      if (defaultOption === undefined || userOption === undefined) throw new TypeError('文件格式化失败')
-      defaultOption.server = Object.assign({}, defaultOption.server, userOption.server)
-      defaultOption.config = Object.assign({}, defaultOption.config, userOption.config)
-      for (const uid in userOption.user)
-        defaultOption.user[uid] = Object.assign({}, defaultOption.newUserData, userOption.user[uid])
-      defaultOption.roomList.forEach(([long, short]) => {
-        shortRoomID.set(long, short)
-        longRoomID.set(short, long)
-      })
-      return resolve(defaultOption)
-    }
-    else {
-      const blacklist = ['newUserData', 'info', 'apiIPs', 'roomList']
-      const error = await FSwriteFile(dirname + '/options/options.json'
-        , JSON.stringify(options, (key, value) => blacklist.includes(key) ? undefined : value, 2))
-      if (error !== undefined) ErrorLog(error)
-      resolve(options)
-    }
-  })
-}
-/**
- * 设置cookie
- * 
- * @param {string} cookieString
- * @returns {request.CookieJar}
- */
-function setCookie(cookieString: string): request.CookieJar {
-  const jar = request.jar()
-  cookieString.split(';').forEach(cookie => {
-    jar.setCookie(`${cookie}; Domain=bilibili.com; Path=/`, 'https://bilibili.com')
-  })
-  return jar
-}
-/**
- * 获取cookie值
- * 
- * @param {request.CookieJar} jar 
- * @param {string} key 
- * @param {string} [url=apiLiveOrigin] 
- * @returns {string} 
- */
-function getCookie(jar: request.CookieJar, key: string, url = apiLiveOrigin): string {
-  const cookies = jar.getCookies(url)
-  const cookieFind = cookies.find(cookie => cookie.key === key)
-  return cookieFind === undefined ? '' : cookieFind.value
-}
-/**
- * 格式化JSON
- * 
- * @template T 
- * @param {string} text 
- * @param {((key: any, value: any) => any)} [reviver] 
- * @returns {Promise<T | undefined>} 
- */
-function JSONparse<T>(text: string, reviver?: ((key: any, value: any) => any)): Promise<T | undefined> {
-  return new Promise<T | undefined>(resolve => {
-    try {
-      const obj = JSON.parse(text, reviver)
-      return resolve(obj)
-    }
-    catch (error) {
-      ErrorLog('JSONparse', error)
-      return resolve(undefined)
-    }
-  })
-}
-/**
- * Hash
- * 
- * @param {string} algorithm 
- * @param {(string | Buffer)} data 
- * @returns {string} 
- */
-function Hash(algorithm: string, data: string | Buffer): string {
-  return crypto.createHash(algorithm).update(data).digest('hex')
-}
-/**
- * 格式化输出, 配合PM2凑合用
- * 
- * @param {...any[]} message 
- */
-function Log(...message: any[]) {
-  const log = util.format(`${new Date().toString().slice(4, 24)} :`, ...message)
-  if (logs.data.length > 500) logs.data.shift()
-  if (typeof logs.onLog === 'function') logs.onLog(log)
-  logs.data.push(log)
-  console.log(log)
-}
-const logs: { data: string[], onLog?: (data: string) => void } = {
-  data: []
-}
-/**
- * 格式化输出, 配合PM2凑合用
- * 
- * @param {...any[]} message 
- */
-function ErrorLog(...message: any[]) {
-  console.error(`${new Date().toString().slice(4, 24)} :`, ...message)
-}
-/**
- * 发送Server酱消息
- * 
- * @param {string} message 
- */
-function sendSCMSG(message: string) {
-  const adminServerChan = _options.config.adminServerChan
-  if (adminServerChan !== '') {
-    const sendtoadmin: request.Options = {
-      method: 'POST',
-      uri: `https://sc.ftqq.com/${adminServerChan}.send`,
-      body: `text=bilive_client&desp=${message}`
-    }
-    XHR<serverChan>(sendtoadmin)
   }
+  /**
+   * Hash
+   *
+   * @param {string} algorithm
+   * @param {(string | Buffer)} data
+   * @returns {string}
+   * @memberof tools
+   */
+  public Hash(algorithm: string, data: string | Buffer): string {
+    return crypto.createHash(algorithm).update(data).digest('hex')
+  }
+  /**
+   * 当前系统时间
+   *
+   * @returns {string}
+   * @memberof Tools
+   */
+  public Date(): string {
+    return new Date().toString().slice(4, 24)
+  }
+  /**
+   * 格式化输出, 配合PM2凑合用
+   *
+   * @param {...any[]} message
+   * @memberof tools
+   */
+  public Log(...message: any[]) {
+    const log = util.format(`${this.Date()} :`, ...message)
+    if (this.logs.length > 500) this.logs.shift()
+    this.emit('log', log)
+    this.logs.push(log)
+    console.log(log)
+  }
+  public logs: string[] = []
+  /**
+   * 格式化输出, 配合PM2凑合用
+   *
+   * @param {...any[]} message
+   * @memberof tools
+   */
+  public ErrorLog(...message: any[]) {
+    console.error(`${this.Date()} :`, ...message)
+  }
+  /**
+   * sleep
+   *
+   * @param {number} ms
+   * @returns {Promise<'sleep'>}
+   * @memberof tools
+   */
+  public Sleep(ms: number): Promise<'sleep'> {
+    return new Promise<'sleep'>(resolve => setTimeout(() => resolve('sleep'), ms))
+  }
+  /**
+   * 为了兼容旧版
+   *
+   * @param {string} message
+   * @returns {void}
+   * @memberof Tools
+   */
+  public sendSCMSG!: (message: string) => void
+  /**
+   * 验证码识别
+   *
+   * @param {string} captchaJPEG
+   * @returns {Promise<string>}
+   * @memberof tools
+   */
+  public Captcha!: (captchaJPEG: string) => Promise<string>
 }
-/**
- * sleep
- * 
- * @param {number} ms
- * @returns {Promise<'sleep'>}
- */
-function Sleep(ms: number): Promise<'sleep'> {
-  return new Promise<'sleep'>(resolve => setTimeout(() => resolve('sleep'), ms))
-}
-/**
- * XHR返回
- * 
- * @interface response
- * @template T 
- */
-interface response<T> {
-  response: request.RequestResponse
-  body: T
-}
-export default { testIP, XHR, setCookie, getCookie, Options, getShortRoomID, getLongRoomID, JSONparse, Hash, Log, logs, ErrorLog, sendSCMSG, Sleep }
-export { response }
+export default new Tools()
